@@ -6,6 +6,7 @@ import path from 'path';
 import {createEmailMessage, createEmailWithNodemailer} from "./utl.js";
 import { createLabel, updateLabel, deleteLabel, listLabels, findLabelByName, getOrCreateLabel, GmailLabel } from "./label-manager.js";
 import { createFilter, listFilters, getFilter, deleteFilter, filterTemplates, GmailFilterCriteria, GmailFilterAction } from "./filter-manager.js";
+import { headerValue, unfold, replySource, computeReplyAll, planReplyRecipients, formatAddressList, replySubject, buildReferences } from "./reply.js";
 
 // Type definitions for Gmail API responses
 interface GmailMessagePart {
@@ -82,6 +83,18 @@ const SendEmailSchema = z.object({
     threadId: z.string().optional().describe("Thread ID to reply to"),
     inReplyTo: z.string().optional().describe("Message ID being replied to"),
     attachments: z.array(z.string()).optional().describe("List of file paths to attach to the email"),
+});
+
+const ReplyEmailSchema = z.object({
+    messageId: z.string().describe("ID of the email being replied to, as search_emails and read_email give it"),
+    body: z.string().describe("Reply body content (used for text/plain or when htmlBody not provided)"),
+    htmlBody: z.string().optional().describe("HTML version of the reply body"),
+    mimeType: z.enum(['text/plain', 'text/html', 'multipart/alternative']).optional().default('text/plain').describe("Email content type"),
+    to: z.array(z.string()).optional().describe("Email addresses to add in To, of people the email did not go to"),
+    cc: z.array(z.string()).optional().describe("Email addresses to add in Cc, of people the email did not go to"),
+    bcc: z.array(z.string()).optional().describe("Email addresses to add in Bcc"),
+    exclude: z.array(z.string()).optional().describe("Email addresses of people on the email to leave out of the reply; only when the person asked to leave them out"),
+    attachments: z.array(z.string()).optional().describe("List of file paths to attach to the reply"),
 });
 
 const ReadEmailSchema = z.object({
@@ -212,6 +225,11 @@ export function listTools() {
             inputSchema: zodToJsonSchema(SendEmailSchema),
         },
         {
+            name: "reply_email",
+            description: "Replies to an email in its conversation. The reply goes to the sender and to everyone in To and Cc of that email, except the mailbox owner, unless exclude names someone to leave out. to, cc and bcc only add people the email did not go to.",
+            inputSchema: zodToJsonSchema(ReplyEmailSchema),
+        },
+        {
             name: "read_email",
             description: "Retrieves the content of a specific email",
             inputSchema: zodToJsonSchema(ReadEmailSchema),
@@ -297,6 +315,23 @@ export function listTools() {
             inputSchema: zodToJsonSchema(DownloadAttachmentSchema),
         },
     ];
+}
+
+// The headers reply_email reads from the email it answers
+const REPLY_HEADERS = ['Subject', 'From', 'To', 'Cc', 'Reply-To', 'Message-ID', 'References'];
+
+// The mailbox owner's addresses: the profile's, plus its send-as aliases when they can be read
+async function getOwnAddresses(gmail: gmail_v1.Gmail): Promise<string[]> {
+    const aliases = (async () => {
+        try {
+            const response = await gmail.users.settings.sendAs.list({ userId: 'me' });
+            return (response.data.sendAs || []).map(s => s.sendAsEmail || '');
+        } catch {
+            return [];
+        }
+    })();
+    const profile = await gmail.users.getProfile({ userId: 'me' });
+    return [profile.data.emailAddress || '', ...(await aliases)].filter(Boolean);
 }
 
 // Tool call handler, as the server answers CallTool; `gmail` is the Gmail API client
@@ -462,13 +497,74 @@ export async function handleTool(gmail: gmail_v1.Gmail, name: string, args: any)
                 return await handleEmailAction(action, validatedArgs);
             }
 
+            case "reply_email": {
+                const validatedArgs = ReplyEmailSchema.parse(args);
+                const [original, ownAddresses] = await Promise.all([
+                    gmail.users.messages.get({
+                        userId: 'me',
+                        id: validatedArgs.messageId,
+                        format: 'metadata',
+                        metadataHeaders: REPLY_HEADERS,
+                    }),
+                    getOwnAddresses(gmail),
+                ]);
+                const headers = original.data.payload?.headers || [];
+                const recipients = planReplyRecipients(replySource(headers), ownAddresses, validatedArgs);
+                const messageIdHeader = unfold(headerValue(headers, 'Message-ID')).trim();
+                const threadId = original.data.threadId || '';
+                const reply = {
+                    to: recipients.to.map(m => m.address),
+                    cc: recipients.cc.length > 0 ? recipients.cc.map(m => m.address) : undefined,
+                    bcc: recipients.bcc.length > 0 ? recipients.bcc.map(m => m.address) : undefined,
+                    subject: replySubject(headerValue(headers, 'Subject')),
+                    body: validatedArgs.body,
+                    htmlBody: validatedArgs.htmlBody,
+                    mimeType: validatedArgs.mimeType,
+                    inReplyTo: messageIdHeader || undefined,
+                    references: buildReferences(headerValue(headers, 'References'), messageIdHeader) || undefined,
+                    attachments: validatedArgs.attachments,
+                };
+                const message = reply.attachments && reply.attachments.length > 0
+                    ? await createEmailWithNodemailer(reply)
+                    : createEmailMessage(reply);
+                const encodedMessage = Buffer.from(message).toString('base64')
+                    .replace(/\+/g, '-')
+                    .replace(/\//g, '_')
+                    .replace(/=+$/, '');
+                const result = await gmail.users.messages.send({
+                    userId: 'me',
+                    requestBody: {
+                        raw: encodedMessage,
+                        ...(threadId && { threadId }),
+                    },
+                });
+                const lines = [
+                    `Reply sent with ID: ${result.data.id}`,
+                    `Thread ID: ${result.data.threadId || threadId}`,
+                    `To: ${formatAddressList(recipients.to)}`,
+                    ...(recipients.cc.length > 0 ? [`Cc: ${formatAddressList(recipients.cc)}`] : []),
+                    ...(recipients.bcc.length > 0 ? [`Bcc: ${formatAddressList(recipients.bcc)}`] : []),
+                ];
+                return {
+                    content: [
+                        {
+                            type: "text",
+                            text: lines.join('\n'),
+                        },
+                    ],
+                };
+            }
+
             case "read_email": {
                 const validatedArgs = ReadEmailSchema.parse(args);
-                const response = await gmail.users.messages.get({
-                    userId: 'me',
-                    id: validatedArgs.messageId,
-                    format: 'full',
-                });
+                const [response, ownAddresses] = await Promise.all([
+                    gmail.users.messages.get({
+                        userId: 'me',
+                        id: validatedArgs.messageId,
+                        format: 'full',
+                    }),
+                    getOwnAddresses(gmail),
+                ]);
 
                 const headers = response.data.payload?.headers || [];
                 const subject = headers.find(h => h.name?.toLowerCase() === 'subject')?.value || '';
@@ -476,6 +572,22 @@ export async function handleTool(gmail: gmail_v1.Gmail, name: string, args: any)
                 const to = headers.find(h => h.name?.toLowerCase() === 'to')?.value || '';
                 const date = headers.find(h => h.name?.toLowerCase() === 'date')?.value || '';
                 const threadId = response.data.threadId || '';
+                const messageIdHeader = unfold(headerValue(headers, 'Message-ID')).trim();
+                const cc = unfold(headerValue(headers, 'Cc')).trim();
+                const replyTo = unfold(headerValue(headers, 'Reply-To')).trim();
+                const replyAll = computeReplyAll(replySource(headers), ownAddresses);
+                const headerLines = [
+                    `Thread ID: ${threadId}`,
+                    `Message-ID: ${messageIdHeader}`,
+                    `Subject: ${subject}`,
+                    `From: ${from}`,
+                    `To: ${to}`,
+                    ...(cc ? [`Cc: ${cc}`] : []),
+                    ...(replyTo ? [`Reply-To: ${replyTo}`] : []),
+                    `Date: ${date}`,
+                    `Reply-all To: ${formatAddressList(replyAll.to)}`,
+                    ...(replyAll.cc.length > 0 ? [`Reply-all Cc: ${formatAddressList(replyAll.cc)}`] : []),
+                ];
 
                 // Extract email content using the recursive function
                 const { text, html } = extractEmailContent(response.data.payload as GmailMessagePart || {});
@@ -521,7 +633,7 @@ export async function handleTool(gmail: gmail_v1.Gmail, name: string, args: any)
                     content: [
                         {
                             type: "text",
-                            text: `Thread ID: ${threadId}\nSubject: ${subject}\nFrom: ${from}\nTo: ${to}\nDate: ${date}\n\n${contentTypeNote}${body}${attachmentInfo}`,
+                            text: `${headerLines.join('\n')}\n\n${contentTypeNote}${body}${attachmentInfo}`,
                         },
                     ],
                 };
