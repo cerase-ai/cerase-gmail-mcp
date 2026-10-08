@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import type { gmail_v1 } from 'googleapis';
+import type { gmail_v1 } from '@googleapis/gmail';
 import fs from 'fs';
 import path from 'path';
 import {createEmailMessage, createEmailWithNodemailer} from "./utl.js";

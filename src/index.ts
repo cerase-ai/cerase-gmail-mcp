@@ -6,7 +6,7 @@ import {
     CallToolRequestSchema,
     ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { google } from 'googleapis';
+import { gmail as gmailClient } from '@googleapis/gmail';
 import { OAuth2Client } from 'google-auth-library';
 import fs from 'fs';
 import path from 'path';
@@ -134,7 +134,7 @@ async function main() {
     }
 
     // Initialize Gmail API
-    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+    const gmail = gmailClient({ version: 'v1', auth: oauth2Client });
 
     // Server implementation
     const server = new Server({
