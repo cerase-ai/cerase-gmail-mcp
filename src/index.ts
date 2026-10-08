@@ -140,6 +140,7 @@ async function main() {
     const server = new Server({
         name: "gmail",
         version: "1.0.0",
+    }, {
         capabilities: {
             tools: {},
         },

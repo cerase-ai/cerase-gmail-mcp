@@ -58,6 +58,8 @@ The reply-all logic is in `src/reply.ts`; the tool list and the tool handler are
 
 ## Build and run
 
+Needs Node.js 22 or later, which googleapis 184 requires.
+
 ```sh
 npm ci
 npm run build
