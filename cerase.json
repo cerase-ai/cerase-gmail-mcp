@@ -1,0 +1,38 @@
+{
+  "schema_version": 2,
+  "namespace": "studio.guidance",
+  "name": "gmail",
+  "type": "connector",
+  "display_name": "Gmail",
+  "description": "Your own Gmail mailbox: read, search, label and send mail, and reply to everyone a mail went to in the same conversation.",
+  "license": "MIT",
+  "install": {
+    "command": "node /opt/cerase-gmail-mcp/dist/index.js"
+  },
+  "auth": {
+    "kind": "oauth2",
+    "provider": "google",
+    "credential_scope": "user",
+    "scopes": [
+      "https://www.googleapis.com/auth/gmail.modify",
+      "https://www.googleapis.com/auth/gmail.send"
+    ]
+  },
+  "tool_side_effects": {
+    "default": "workspace_write",
+    "read_only": [
+      "read_email",
+      "search_emails",
+      "list_email_labels",
+      "list_filters",
+      "get_filter",
+      "download_attachment"
+    ],
+    "backend_write": [
+      "delete_email",
+      "batch_delete_emails",
+      "delete_label",
+      "delete_filter"
+    ]
+  }
+}

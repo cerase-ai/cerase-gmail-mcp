@@ -1,7 +1,8 @@
 {
-  "name": "@gongrzhe/server-gmail-autoauth-mcp",
-  "version": "1.1.11",
-  "description": "Gmail MCP server with auto authentication support",
+  "name": "cerase-gmail-mcp",
+  "version": "1.1.11-cerase.1",
+  "private": true,
+  "description": "Gmail MCP server, a fork of @gongrzhe/server-gmail-autoauth-mcp 1.1.11",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -10,9 +11,7 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "auth": "node dist/index.js auth",
-    "prepare": "npm run build",
-    "prepublishOnly": "npm run build"
+    "auth": "node dist/index.js auth"
   },
   "files": [
     "dist",
@@ -30,17 +29,10 @@
     "auto-auth"
   ],
   "author": "gongrzhe",
-  "license": "ISC",
+  "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/gongrzhe/server-gmail-autoauth-mcp.git"
-  },
-  "bugs": {
-    "url": "https://github.com/gongrzhe/server-gmail-autoauth-mcp/issues"
-  },
-  "homepage": "https://github.com/gongrzhe/server-gmail-autoauth-mcp#readme",
-  "publishConfig": {
-    "access": "public"
+    "url": "git+https://github.com/cerase-ai/cerase-gmail-mcp.git"
   },
   "engines": {
     "node": ">=14.0.0"
@@ -50,7 +42,6 @@
     "@types/mime-types": "^2.1.4",
     "google-auth-library": "^9.4.1",
     "googleapis": "^129.0.0",
-    "mcp-evals": "^1.0.18",
     "mime-types": "^3.0.1",
     "nodemailer": "^7.0.3",
     "open": "^10.0.0",
