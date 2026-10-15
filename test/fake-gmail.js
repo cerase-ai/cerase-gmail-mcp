@@ -1,5 +1,6 @@
 // A stand-in for the googleapis Gmail client: answers the calls the tool
 // handlers make and records them, so a test can read what would have been sent.
+// It can also refuse a method with a Gmail-shaped error, to test retries.
 
 export function b64(text) {
     return Buffer.from(text, 'utf8').toString('base64');
@@ -29,9 +30,59 @@ export function message({ id = 'msg-1', threadId = 'thread-1', headers = [], tex
     return { id, threadId, payload };
 }
 
-export function fakeGmail({ messages = [], profile = 'owner@example.com', sendAs = [], sendAsError = null, sentId = 'sent-1' } = {}) {
+// A refusal as Gmail denies a request: an Error carrying the HTTP status, the
+// API error object and the response headers (which may hold `retry-after`).
+export function googleError({ status = 429, reason = 'rateLimitExceeded', message = 'Quota exceeded', retryAfter } = {}) {
+    const apiStatus = status === 429 ? 'RESOURCE_EXHAUSTED' : 'PERMISSION_DENIED';
+    const apiError = {
+        code: status,
+        message,
+        status: apiStatus,
+        errors: [{ message, domain: 'usageLimits', reason }],
+    };
+    const headers = new Headers();
+    if (retryAfter !== undefined) headers.set('retry-after', String(retryAfter));
+    const error = new Error(message);
+    error.status = status;
+    error.code = status;
+    error.cause = apiError;
+    error.response = { status, headers, data: { error: apiError } };
+    return error;
+}
+
+export const PER_MINUTE_QUOTA = "Quota exceeded for quota metric 'Units' and limit 'Units per minute per user' of service 'gmail.googleapis.com' for consumer 'project_number:000000000000'.";
+
+// A clock whose sleep resolves at once and advances now, so a test of the retry
+// waits nothing on the wall clock but can read what it would have waited.
+export function fakeClock() {
+    let current = 0;
+    const slept = [];
+    return {
+        slept,
+        now: () => current,
+        sleep: async (ms) => { slept.push(ms); current += ms; },
+        random: () => 0.5,
+    };
+}
+
+// `refusals` is keyed by method path ('messages.list', 'messages.get', ...). An
+// array makes that method throw one error per call until spent then answer; a
+// single error makes it throw on every call. Refused calls are still recorded.
+export function fakeGmail({ messages = [], profile = 'owner@example.com', sendAs = [], sendAsError = null, sentId = 'sent-1', refusals = {} } = {}) {
     const byId = Object.fromEntries(messages.map(m => [m.id, m]));
-    const calls = { get: [], send: [], drafts: [], getProfile: 0, sendAsList: 0 };
+    const queues = Object.fromEntries(
+        Object.entries(refusals).map(([method, value]) => [method, Array.isArray(value) ? [...value] : value])
+    );
+    const refuseOrNot = (method) => {
+        const value = queues[method];
+        if (value === undefined) return;
+        if (Array.isArray(value)) {
+            if (value.length > 0) throw value.shift();
+            return;
+        }
+        throw value;
+    };
+    const calls = { list: [], get: [], send: [], drafts: [], getProfile: 0, sendAsList: 0 };
     const gmail = {
         users: {
             getProfile: async () => {
@@ -48,14 +99,22 @@ export function fakeGmail({ messages = [], profile = 'owner@example.com', sendAs
                 },
             },
             messages: {
+                list: async (params) => {
+                    calls.list.push(params);
+                    refuseOrNot('messages.list');
+                    const max = params.maxResults === undefined ? messages.length : params.maxResults;
+                    return { data: { messages: messages.slice(0, max).map(m => ({ id: m.id, threadId: m.threadId })) } };
+                },
                 get: async (params) => {
                     calls.get.push(params);
+                    refuseOrNot('messages.get');
                     const found = byId[params.id];
                     if (!found) throw new Error('Requested entity was not found.');
                     return { data: found };
                 },
                 send: async (params) => {
                     calls.send.push(params);
+                    refuseOrNot('messages.send');
                     return { data: { id: sentId, threadId: params.requestBody.threadId || 'thread-new' } };
                 },
             },

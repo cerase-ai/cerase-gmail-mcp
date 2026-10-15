@@ -53,8 +53,18 @@ Cc: "Rossi, Mario" <mario@example.com>, giulia@example.com
 
 with a `Bcc:` line when it has Bcc. `send_email` and `draft_email` are unchanged.
 
-The reply-all logic is in `src/reply.ts`; the tool list and the tool handler are in `src/tools.ts`;
-`src/index.ts` authenticates and serves them over stdio.
+**3. A request Gmail refuses for its per-minute quota is retried.** A refusal with HTTP 429, or with
+403 and reason `rateLimitExceeded` or `userRateLimitExceeded`, is sent again after an exponential
+backoff with jitter: the n-th wait lasts between half and all of 1, 2, 4, 8, 16 and then 32 seconds,
+or longer when Gmail's `Retry-After` asks for more. A request is retried for up to 90 seconds, a
+little over the minute the quota is counted on, and then the tool answers
+`Error: Gmail refused this request for its per-minute quota and was still refusing after <n> seconds of retries: <Gmail's message>`.
+Any other refusal, a missing scope or the daily limit among them, answers at once as upstream does.
+Every tool is covered; `search_emails` fetches every result in parallel, and searches of a few
+hundred results are where Gmail has refused it.
+
+The reply-all logic is in `src/reply.ts`; the quota retry is in `src/quota-retry.ts`; the tool list
+and the tool handler are in `src/tools.ts`; `src/index.ts` authenticates and serves them over stdio.
 
 ## Build and run
 
@@ -76,7 +86,8 @@ npm test
 ```
 
 builds and runs Node's test runner on `test/*.test.js`. The tool handlers are called with a fake
-Gmail client (`test/fake-gmail.js`), so no Google account is involved.
+Gmail client (`test/fake-gmail.js`), and the quota retry also with the real client against a local
+HTTP server, so no Google account is involved.
 
 ## Licence
 

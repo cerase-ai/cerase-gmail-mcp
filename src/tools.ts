@@ -7,6 +7,7 @@ import {createEmailMessage, createEmailWithNodemailer} from "./utl.js";
 import { createLabel, updateLabel, deleteLabel, listLabels, findLabelByName, getOrCreateLabel, GmailLabel } from "./label-manager.js";
 import { createFilter, listFilters, getFilter, deleteFilter, filterTemplates, GmailFilterCriteria, GmailFilterAction } from "./filter-manager.js";
 import { headerValue, unfold, replySource, computeReplyAll, planReplyRecipients, formatAddressList, replySubject, buildReferences } from "./reply.js";
+import { withQuotaRetry, type QuotaRetryOptions } from "./quota-retry.js";
 
 // Type definitions for Gmail API responses
 interface GmailMessagePart {
@@ -335,7 +336,10 @@ async function getOwnAddresses(gmail: gmail_v1.Gmail): Promise<string[]> {
 }
 
 // Tool call handler, as the server answers CallTool; `gmail` is the Gmail API client
-export async function handleTool(gmail: gmail_v1.Gmail, name: string, args: any) {
+export async function handleTool(gmail: gmail_v1.Gmail, name: string, args: any, retry: QuotaRetryOptions = {}) {
+    // The one place every request of every tool passes through, directly or via the helpers.
+    gmail = withQuotaRetry(gmail, retry);
+
     async function handleEmailAction(action: "send" | "draft", validatedArgs: any) {
         let message: string;
 
