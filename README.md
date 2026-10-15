@@ -63,6 +63,22 @@ Any other refusal, a missing scope or the daily limit among them, answers at onc
 Every tool is covered; `search_emails` fetches every result in parallel, and searches of a few
 hundred results are where Gmail has refused it.
 
+**4. Drafts can be listed and deleted.** `list_drafts` answers, for each draft, its ID, subject, To
+and date, 20 drafts unless `maxResults` asks for more, up to 100:
+
+```
+ID: r-5124848123456789012
+Subject: Budget Q3
+To: Anna Bianchi <anna@example.com>
+Date: Mon, 5 Oct 2026 10:00:00 +0200
+```
+
+`delete_draft` takes that ID, or the one `draft_email` answers, and deletes the draft with
+`users.drafts.delete`: permanently, not to Trash. It answers `Draft <ID> deleted successfully`.
+Gmail accepts that call under the `gmail.modify` scope the connection holds, whereas `delete_email`
+calls `users.messages.delete`, which Gmail accepts only with full access to the mailbox, so
+`delete_email` cannot remove a draft on this connection.
+
 The reply-all logic is in `src/reply.ts`; the quota retry is in `src/quota-retry.ts`; the tool list
 and the tool handler are in `src/tools.ts`; `src/index.ts` authenticates and serves them over stdio.
 
@@ -86,8 +102,8 @@ npm test
 ```
 
 builds and runs Node's test runner on `test/*.test.js`. The tool handlers are called with a fake
-Gmail client (`test/fake-gmail.js`), and the quota retry also with the real client against a local
-HTTP server, so no Google account is involved.
+Gmail client (`test/fake-gmail.js`), and the quota retry and the draft tools also with the real
+client against a local HTTP server, so no Google account is involved.
 
 ## Licence
 

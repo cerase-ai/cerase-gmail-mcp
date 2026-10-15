@@ -87,7 +87,7 @@ test('read_email leaves out a send-as alias, and still answers when the send-as 
 test('reply_email is listed right after draft_email with its input schema', () => {
     const tools = listTools();
     const names = tools.map(t => t.name);
-    assert.equal(names.length, 20);
+    assert.equal(names.length, 22);
     assert.equal(names[names.indexOf('draft_email') + 1], 'reply_email');
     const reply = tools.find(t => t.name === 'reply_email');
     assert.match(reply.description, /conversation/);

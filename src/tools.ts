@@ -119,6 +119,14 @@ const DeleteEmailSchema = z.object({
     messageId: z.string().describe("ID of the email message to delete"),
 });
 
+const ListDraftsSchema = z.object({
+    maxResults: z.number().optional().describe("Maximum number of drafts to return (default 20, at most 100)"),
+});
+
+const DeleteDraftSchema = z.object({
+    draftId: z.string().describe("ID of the draft to delete, as draft_email or list_drafts give it (not the ID of its message)"),
+});
+
 // New schema for listing email labels
 const ListEmailLabelsSchema = z.object({}).describe("Retrieves all available Gmail labels");
 
@@ -229,6 +237,16 @@ export function listTools() {
             name: "reply_email",
             description: "Replies to an email in its conversation. The reply goes to the sender and to everyone in To and Cc of that email, except the mailbox owner, unless exclude names someone to leave out. to, cc and bcc only add people the email did not go to.",
             inputSchema: zodToJsonSchema(ReplyEmailSchema),
+        },
+        {
+            name: "list_drafts",
+            description: "Lists the drafts in the mailbox with each draft's ID, subject, recipients (To) and date. delete_draft takes the ID shown here. maxResults is how many drafts to return: 20 when not given, at most 100.",
+            inputSchema: zodToJsonSchema(ListDraftsSchema),
+        },
+        {
+            name: "delete_draft",
+            description: "Permanently deletes a draft, given the draft ID that draft_email or list_drafts answers. The draft does not go to Trash and cannot be recovered. Use this, not delete_email, to remove a draft.",
+            inputSchema: zodToJsonSchema(DeleteDraftSchema),
         },
         {
             name: "read_email",
@@ -729,6 +747,80 @@ export async function handleTool(gmail: gmail_v1.Gmail, name: string, args: any,
                         {
                             type: "text",
                             text: `Email ${validatedArgs.messageId} deleted successfully`,
+                        },
+                    ],
+                };
+            }
+
+            // Lists the drafts, then fetches each one's subject, To and date
+            case "list_drafts": {
+                const validatedArgs = ListDraftsSchema.parse(args);
+                const maxResults = validatedArgs.maxResults === undefined
+                    ? 20
+                    : Math.min(100, Math.max(1, Math.floor(validatedArgs.maxResults)));
+                const response = await gmail.users.drafts.list({
+                    userId: 'me',
+                    maxResults,
+                });
+                const drafts = response.data.drafts || [];
+
+                if (drafts.length === 0) {
+                    return {
+                        content: [
+                            {
+                                type: "text",
+                                text: "No drafts in the mailbox.",
+                            },
+                        ],
+                    };
+                }
+
+                const results = await Promise.all(
+                    drafts.map(async (draft) => {
+                        const detail = await gmail.users.drafts.get({
+                            userId: 'me',
+                            id: draft.id!,
+                            format: 'metadata',
+                        });
+                        const headers = detail.data.message?.payload?.headers;
+                        return {
+                            id: draft.id,
+                            subject: headerValue(headers, 'Subject'),
+                            to: headerValue(headers, 'To'),
+                            date: headerValue(headers, 'Date'),
+                        };
+                    })
+                );
+
+                return {
+                    content: [
+                        {
+                            type: "text",
+                            text: results.map(r =>
+                                `ID: ${r.id}\nSubject: ${r.subject}\nTo: ${r.to}\nDate: ${r.date}\n`
+                            ).join('\n'),
+                        },
+                    ],
+                };
+            }
+
+            // Deletes one draft by its draft ID
+            case "delete_draft": {
+                const validatedArgs = DeleteDraftSchema.parse(args);
+                const draftId = validatedArgs.draftId.trim();
+                if (!draftId) {
+                    throw new Error("draftId is empty: give the draft's ID, as draft_email or list_drafts answer it");
+                }
+                await gmail.users.drafts.delete({
+                    userId: 'me',
+                    id: draftId,
+                });
+
+                return {
+                    content: [
+                        {
+                            type: "text",
+                            text: `Draft ${draftId} deleted successfully`,
                         },
                     ],
                 };

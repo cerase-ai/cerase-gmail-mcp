@@ -65,11 +65,13 @@ export function fakeClock() {
     };
 }
 
-// `refusals` is keyed by method path ('messages.list', 'messages.get', ...). An
-// array makes that method throw one error per call until spent then answer; a
-// single error makes it throw on every call. Refused calls are still recorded.
-export function fakeGmail({ messages = [], profile = 'owner@example.com', sendAs = [], sendAsError = null, sentId = 'sent-1', refusals = {} } = {}) {
+// `refusals` is keyed by method path ('messages.list', 'messages.get', 'drafts.list',
+// 'drafts.get', 'drafts.delete', ...). An array makes that method throw one error per call
+// until spent then answer; a single error makes it throw on every call. Refused calls are
+// still recorded.
+export function fakeGmail({ messages = [], drafts = [], profile = 'owner@example.com', sendAs = [], sendAsError = null, sentId = 'sent-1', refusals = {} } = {}) {
     const byId = Object.fromEntries(messages.map(m => [m.id, m]));
+    const draftsById = Object.fromEntries(drafts.map(d => [d.id, d]));
     const queues = Object.fromEntries(
         Object.entries(refusals).map(([method, value]) => [method, Array.isArray(value) ? [...value] : value])
     );
@@ -82,7 +84,7 @@ export function fakeGmail({ messages = [], profile = 'owner@example.com', sendAs
         }
         throw value;
     };
-    const calls = { list: [], get: [], send: [], drafts: [], getProfile: 0, sendAsList: 0 };
+    const calls = { list: [], get: [], send: [], drafts: [], draftLists: [], draftGets: [], draftDeletes: [], getProfile: 0, sendAsList: 0 };
     const gmail = {
         users: {
             getProfile: async () => {
@@ -122,6 +124,27 @@ export function fakeGmail({ messages = [], profile = 'owner@example.com', sendAs
                 create: async (params) => {
                     calls.drafts.push(params);
                     return { data: { id: 'draft-1' } };
+                },
+                list: async (params) => {
+                    calls.draftLists.push(params);
+                    refuseOrNot('drafts.list');
+                    if (drafts.length === 0) return { data: {} };
+                    const max = params.maxResults === undefined ? drafts.length : params.maxResults;
+                    return { data: { drafts: drafts.slice(0, max).map(d => ({ id: d.id, message: { id: d.message.id, threadId: d.message.threadId } })) } };
+                },
+                get: async (params) => {
+                    calls.draftGets.push(params);
+                    refuseOrNot('drafts.get');
+                    const found = draftsById[params.id];
+                    if (!found) throw new Error('Requested entity was not found.');
+                    return { data: { id: found.id, message: found.message } };
+                },
+                delete: async (params) => {
+                    calls.draftDeletes.push(params);
+                    refuseOrNot('drafts.delete');
+                    const found = draftsById[params.id];
+                    if (!found) throw new Error('Requested entity was not found.');
+                    return { data: '' };
                 },
             },
         },

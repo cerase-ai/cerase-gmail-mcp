@@ -26,13 +26,15 @@
       "list_email_labels",
       "list_filters",
       "get_filter",
-      "download_attachment"
+      "download_attachment",
+      "list_drafts"
     ],
     "backend_write": [
       "delete_email",
       "batch_delete_emails",
       "delete_label",
-      "delete_filter"
+      "delete_filter",
+      "delete_draft"
     ]
   }
 }
