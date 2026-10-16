@@ -27,7 +27,8 @@
       "list_filters",
       "get_filter",
       "download_attachment",
-      "list_drafts"
+      "list_drafts",
+      "get_draft"
     ],
     "backend_write": [
       "delete_email",

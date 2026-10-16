@@ -127,6 +127,10 @@ const DeleteDraftSchema = z.object({
     draftId: z.string().describe("ID of the draft to delete, as draft_email or list_drafts give it (not the ID of its message)"),
 });
 
+const GetDraftSchema = z.object({
+    draftId: z.string().describe("ID of the draft to read, as draft_email or list_drafts give it (not the ID of its message)"),
+});
+
 // New schema for listing email labels
 const ListEmailLabelsSchema = z.object({}).describe("Retrieves all available Gmail labels");
 
@@ -247,6 +251,11 @@ export function listTools() {
             name: "delete_draft",
             description: "Permanently deletes a draft, given the draft ID that draft_email or list_drafts answers. The draft does not go to Trash and cannot be recovered. Use this, not delete_email, to remove a draft.",
             inputSchema: zodToJsonSchema(DeleteDraftSchema),
+        },
+        {
+            name: "get_draft",
+            description: "Reads one draft, given the draft ID that draft_email or list_drafts answers, and answers its ID, subject, recipients (To) and date, as list_drafts does for each. Use it to tell which draft an ID names before delete_draft removes it.",
+            inputSchema: zodToJsonSchema(GetDraftSchema),
         },
         {
             name: "read_email",
@@ -821,6 +830,30 @@ export async function handleTool(gmail: gmail_v1.Gmail, name: string, args: any,
                         {
                             type: "text",
                             text: `Draft ${draftId} deleted successfully`,
+                        },
+                    ],
+                };
+            }
+
+            // Reads one draft by its draft ID, in the same form list_drafts answers
+            case "get_draft": {
+                const validatedArgs = GetDraftSchema.parse(args);
+                const draftId = validatedArgs.draftId.trim();
+                if (!draftId) {
+                    throw new Error("draftId is empty: give the draft's ID, as draft_email or list_drafts answer it");
+                }
+                const detail = await gmail.users.drafts.get({
+                    userId: 'me',
+                    id: draftId,
+                    format: 'metadata',
+                });
+                const headers = detail.data.message?.payload?.headers;
+
+                return {
+                    content: [
+                        {
+                            type: "text",
+                            text: `ID: ${detail.data.id ?? draftId}\nSubject: ${headerValue(headers, 'Subject')}\nTo: ${headerValue(headers, 'To')}\nDate: ${headerValue(headers, 'Date')}\n`,
                         },
                     ],
                 };

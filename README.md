@@ -73,6 +73,9 @@ To: Anna Bianchi <anna@example.com>
 Date: Mon, 5 Oct 2026 10:00:00 +0200
 ```
 
+`get_draft` takes one such ID and answers that draft alone, in the same form, under the same
+`gmail.modify` scope (`users.drafts.get`); the approval to delete a draft is named by it.
+
 `delete_draft` takes that ID, or the one `draft_email` answers, and deletes the draft with
 `users.drafts.delete`: permanently, not to Trash. It answers `Draft <ID> deleted successfully`.
 Gmail accepts that call under the `gmail.modify` scope the connection holds, whereas `delete_email`

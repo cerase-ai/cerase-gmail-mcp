@@ -52,7 +52,7 @@ const EXPECTED_TWO_DRAFTS = [
     '',
 ].join('\n');
 
-const DELETE_ERROR = 'Error: draftId is empty: give the draft\'s ID, as draft_email or list_drafts answer it';
+const EMPTY_DRAFT_ID = 'Error: draftId is empty: give the draft\'s ID, as draft_email or list_drafts answer it';
 
 test('delete_draft calls drafts.delete and answers the draft id', async () => {
     const draft = { id: 'r-123', message: message({ id: 'm-123', threadId: 't-123' }) };
@@ -66,7 +66,7 @@ test('delete_draft calls drafts.delete and answers the draft id', async () => {
 test('delete_draft refuses an empty draft id without calling Gmail', async () => {
     const { gmail, calls } = fakeGmail();
     for (const draftId of ['', '   ']) {
-        assert.equal(text(await handleTool(gmail, 'delete_draft', { draftId })), DELETE_ERROR);
+        assert.equal(text(await handleTool(gmail, 'delete_draft', { draftId })), EMPTY_DRAFT_ID);
     }
     assert.match(text(await handleTool(gmail, 'delete_draft', {})), /^Error:/);
     assert.equal(calls.draftDeletes.length, 0);
@@ -115,12 +115,40 @@ test('list_drafts reports an empty mailbox and fetches nothing', async () => {
     assert.equal(calls.draftGets.length, 0);
 });
 
-test('list_drafts and delete_draft are listed right after reply_email', () => {
+test('get_draft answers one block in the form list_drafts uses', async () => {
+    const { gmail, calls } = fakeGmail({ drafts: [DRAFT_ONE] });
+    const result = await handleTool(gmail, 'get_draft', { draftId: 'r-1' });
+    assert.equal(text(result), [
+        'ID: r-1',
+        'Subject: Budget',
+        'To: anna@example.com',
+        'Date: Mon, 5 Oct 2026 10:00:00 +0200',
+        '',
+    ].join('\n'));
+    assert.deepEqual(calls.draftGets, [{ userId: 'me', id: 'r-1', format: 'metadata' }]);
+});
+
+test('get_draft refuses an empty draft id without calling Gmail', async () => {
+    const { gmail, calls } = fakeGmail();
+    for (const draftId of ['', '   ']) {
+        assert.equal(text(await handleTool(gmail, 'get_draft', { draftId })), EMPTY_DRAFT_ID);
+    }
+    assert.match(text(await handleTool(gmail, 'get_draft', {})), /^Error:/);
+    assert.equal(calls.draftGets.length, 0);
+});
+
+test('get_draft answers a Gmail error', async () => {
+    const { gmail } = fakeGmail();
+    assert.equal(text(await handleTool(gmail, 'get_draft', { draftId: 'nope' })), 'Error: Requested entity was not found.');
+});
+
+test('list_drafts, delete_draft and get_draft are listed right after reply_email', () => {
     const names = listTools().map(t => t.name);
-    assert.equal(names.length, 22);
+    assert.equal(names.length, 23);
     const at = names.indexOf('reply_email');
     assert.equal(names[at + 1], 'list_drafts');
     assert.equal(names[at + 2], 'delete_draft');
+    assert.equal(names[at + 3], 'get_draft');
 });
 
 test('delete_draft keeps its input schema and description', () => {
@@ -139,6 +167,14 @@ test('list_drafts keeps its input schema and description', () => {
     assert.equal(tool.inputSchema.properties.maxResults.type, 'number');
     assert.ok(!tool.inputSchema.required || tool.inputSchema.required.length === 0);
     assert.match(tool.description, /delete_draft/);
+});
+
+test('get_draft keeps its input schema and description', () => {
+    const tool = listTools().find(t => t.name === 'get_draft');
+    assert.deepEqual(Object.keys(tool.inputSchema.properties), ['draftId']);
+    assert.deepEqual(tool.inputSchema.required, ['draftId']);
+    assert.equal(tool.inputSchema.properties.draftId.type, 'string');
+    assert.match(tool.description, /list_drafts/);
 });
 
 // The real client: a local server stands in for Gmail, so the tests read the requests the
@@ -208,6 +244,22 @@ test('list_drafts lists the drafts and fetches each one metadata', async () => {
     const listed = requests.find(r => r.method === 'GET' && r.path.endsWith('/gmail/v1/users/me/drafts'));
     assert.ok(listed, JSON.stringify(requests));
     assert.equal(listed.query.get('maxResults'), '20');
+
+    const fetched = requests.find(r => r.method === 'GET' && r.path.endsWith('/gmail/v1/users/me/drafts/r-9'));
+    assert.ok(fetched, JSON.stringify(requests));
+    assert.equal(fetched.query.get('format'), 'metadata');
+});
+
+test('get_draft sends one GET to the draft URL, metadata', async () => {
+    reset();
+    const result = await handleTool(gmail, 'get_draft', { draftId: 'r-9' });
+    assert.equal(text(result), [
+        'ID: r-9',
+        'Subject: Budget',
+        'To: anna@example.com',
+        'Date: Mon, 5 Oct 2026 10:00:00 +0200',
+        '',
+    ].join('\n'));
 
     const fetched = requests.find(r => r.method === 'GET' && r.path.endsWith('/gmail/v1/users/me/drafts/r-9'));
     assert.ok(fetched, JSON.stringify(requests));
