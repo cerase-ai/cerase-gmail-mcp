@@ -108,7 +108,7 @@ test('read_email returns the upstream body, note and attachments block after the
     const out = text(await handleTool(gmail, 'read_email', { messageId: 'msg-1' }));
     const [head, ...rest] = out.split('\n\n');
     assert.equal(rest.join('\n\n'),
-        '[Note: This email is HTML-formatted. Plain text version not available.]\n\n<p>Hi</p>\n\nAttachments (1):\n- q3.pdf (application/pdf, 2 KB, ID: att-1)');
+        '[Note: This email is HTML-formatted. Plain text version not available.]\n\n<p>Hi</p>\n\nAttachments (1):\n- q3.pdf (application/pdf, 2 KB)\n  Attachment ID: att-1');
     const lines = head.split('\n');
     assert.equal(lines[0], 'Thread ID: thread-1');
     for (const line of ['Subject: Budget', 'From: Anna <anna@example.com>', 'To: owner@example.com', 'Date: Mon, 5 Oct 2026 10:00:00 +0200']) {

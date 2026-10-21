@@ -218,7 +218,7 @@ const CreateFilterFromTemplateSchema = z.object({
 
 const DownloadAttachmentSchema = z.object({
     messageId: z.string().describe("ID of the email message containing the attachment"),
-    attachmentId: z.string().describe("ID of the attachment to download"),
+    attachmentId: z.string().describe("ID of the attachment to download, as read_email lists it on its 'Attachment ID:' line"),
     filename: z.string().optional().describe("Filename to save the attachment as (if not provided, uses original filename)"),
     savePath: z.string().optional().describe("Directory path to save the attachment (defaults to current directory)"),
 });
@@ -658,7 +658,7 @@ export async function handleTool(gmail: gmail_v1.Gmail, name: string, args: any,
                 // Add attachment info to output if any are present
                 const attachmentInfo = attachments.length > 0 ?
                     `\n\nAttachments (${attachments.length}):\n` +
-                    attachments.map(a => `- ${a.filename} (${a.mimeType}, ${Math.round(a.size/1024)} KB, ID: ${a.id})`).join('\n') : '';
+                    attachments.map(a => `- ${a.filename} (${a.mimeType}, ${Math.round(a.size/1024)} KB)\n  Attachment ID: ${a.id}`).join('\n') : '';
 
                 return {
                     content: [
@@ -1207,6 +1207,11 @@ export async function handleTool(gmail: gmail_v1.Gmail, name: string, args: any,
             }
             case "download_attachment": {
                 const validatedArgs = DownloadAttachmentSchema.parse(args);
+                // An id copied out of a sentence often carries the bracket or the
+                // full stop that closed it, and Gmail answers «Invalid attachment
+                // token», as three downloads did on guidance. A Gmail id is base64url,
+                // so none of these characters belongs to it.
+                validatedArgs.attachmentId = validatedArgs.attachmentId.trim().replace(/[)\],.;:'"`\s]+$/, '');
 
                 try {
                     // Get the attachment data from Gmail API

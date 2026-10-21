@@ -65,11 +65,13 @@ export function fakeClock() {
     };
 }
 
+// `attachments` is keyed by attachment id, each value the attachment bytes as a
+// base64url string; any other id is refused the way Gmail refuses a bad token.
 // `refusals` is keyed by method path ('messages.list', 'messages.get', 'drafts.list',
 // 'drafts.get', 'drafts.delete', ...). An array makes that method throw one error per call
 // until spent then answer; a single error makes it throw on every call. Refused calls are
 // still recorded.
-export function fakeGmail({ messages = [], drafts = [], profile = 'owner@example.com', sendAs = [], sendAsError = null, sentId = 'sent-1', refusals = {} } = {}) {
+export function fakeGmail({ messages = [], drafts = [], attachments = {}, profile = 'owner@example.com', sendAs = [], sendAsError = null, sentId = 'sent-1', refusals = {} } = {}) {
     const byId = Object.fromEntries(messages.map(m => [m.id, m]));
     const draftsById = Object.fromEntries(drafts.map(d => [d.id, d]));
     const queues = Object.fromEntries(
@@ -84,7 +86,7 @@ export function fakeGmail({ messages = [], drafts = [], profile = 'owner@example
         }
         throw value;
     };
-    const calls = { list: [], get: [], send: [], drafts: [], draftLists: [], draftGets: [], draftDeletes: [], getProfile: 0, sendAsList: 0 };
+    const calls = { list: [], get: [], send: [], drafts: [], draftLists: [], draftGets: [], draftDeletes: [], attachmentGets: [], getProfile: 0, sendAsList: 0 };
     const gmail = {
         users: {
             getProfile: async () => {
@@ -118,6 +120,14 @@ export function fakeGmail({ messages = [], drafts = [], profile = 'owner@example
                     calls.send.push(params);
                     refuseOrNot('messages.send');
                     return { data: { id: sentId, threadId: params.requestBody.threadId || 'thread-new' } };
+                },
+                attachments: {
+                    get: async (params) => {
+                        calls.attachmentGets.push(params);
+                        const data = attachments[params.id];
+                        if (data === undefined) throw new Error('Invalid attachment token');
+                        return { data: { data } };
+                    },
                 },
             },
             drafts: {
