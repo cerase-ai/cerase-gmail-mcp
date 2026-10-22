@@ -7,7 +7,7 @@ import http from 'node:http';
 import { gmail as gmailClient } from '@googleapis/gmail';
 import { OAuth2Client } from 'google-auth-library';
 import { listTools, handleTool } from '../dist/tools.js';
-import { fakeGmail, message, googleError, fakeClock, PER_MINUTE_QUOTA } from './fake-gmail.js';
+import { fakeGmail, message, decodeRaw, googleError, fakeClock, PER_MINUTE_QUOTA } from './fake-gmail.js';
 
 const text = (result) => result.content.map(c => c.text).join('');
 
@@ -33,6 +33,19 @@ const DRAFT_TWO = {
         headers: [
             ['subject', 'Lunch'],
             ['Date', 'Tue, 6 Oct 2026 12:00:00 +0200'],
+        ],
+    }),
+};
+
+// A reply draft, with the threading headers a reply carries.
+const REPLY_DRAFT = {
+    id: 'r-7',
+    message: message({
+        id: 'm-7',
+        threadId: 't-7',
+        headers: [
+            ['In-Reply-To', '<orig@example.com>'],
+            ['References', '<a@example.com> <orig@example.com>'],
         ],
     }),
 };
@@ -142,13 +155,136 @@ test('get_draft answers a Gmail error', async () => {
     assert.equal(text(await handleTool(gmail, 'get_draft', { draftId: 'nope' })), 'Error: Requested entity was not found.');
 });
 
-test('list_drafts, delete_draft and get_draft are listed right after reply_email', () => {
+test('update_draft calls drafts.update with the trimmed draft id and the new message', async () => {
+    const { gmail, calls } = fakeGmail({ drafts: [DRAFT_ONE] });
+    const result = await handleTool(gmail, 'update_draft', {
+        draftId: ' r-1 ',
+        to: ['luca@example.com'],
+        subject: 'New budget',
+        body: 'Here it is.',
+    });
+    assert.equal(text(result), 'Email draft updated successfully with ID: r-1\nThread ID: t-1');
+    assert.equal(calls.draftUpdates.length, 1);
+    const call = calls.draftUpdates[0];
+    assert.equal(call.userId, 'me');
+    assert.equal(call.id, 'r-1');
+    assert.equal(call.requestBody.id, 'r-1');
+    const raw = decodeRaw(call.requestBody.message.raw);
+    assert.match(raw, /^To: luca@example\.com\r?$/m);
+    assert.match(raw, /^Subject: New budget\r?$/m);
+    assert.match(raw, /^Here it is\.\r?$/m);
+});
+
+test('update_draft keeps a reply draft in its conversation', async () => {
+    const { gmail, calls } = fakeGmail({ drafts: [REPLY_DRAFT] });
+    const result = await handleTool(gmail, 'update_draft', {
+        draftId: 'r-7',
+        to: ['anna@example.com'],
+        subject: 'Re: Budget',
+        body: 'New reply.',
+    });
+    assert.equal(text(result), 'Email draft updated successfully with ID: r-7\nThread ID: t-7');
+    assert.equal(calls.draftGets.length, 1);
+    assert.equal(calls.draftGets[0].format, 'metadata');
+    assert.equal(calls.draftUpdates[0].requestBody.message.threadId, 't-7');
+    const raw = decodeRaw(calls.draftUpdates[0].requestBody.message.raw);
+    assert.match(raw, /^In-Reply-To: <orig@example\.com>\r?$/m);
+    assert.match(raw, /^References: <a@example\.com> <orig@example\.com>\r?$/m);
+});
+
+test("update_draft lets a caller's threadId and inReplyTo win over the draft's", async () => {
+    const { gmail, calls } = fakeGmail({ drafts: [REPLY_DRAFT] });
+    await handleTool(gmail, 'update_draft', {
+        draftId: 'r-7',
+        to: ['anna@example.com'],
+        subject: 'Re: Budget',
+        body: 'New reply.',
+        threadId: 't-8',
+        inReplyTo: '<new@example.com>',
+    });
+    assert.equal(calls.draftUpdates[0].requestBody.message.threadId, 't-8');
+    const raw = decodeRaw(calls.draftUpdates[0].requestBody.message.raw);
+    assert.match(raw, /^In-Reply-To: <new@example\.com>\r?$/m);
+    assert.doesNotMatch(raw, /^In-Reply-To: <orig@example\.com>\r?$/m);
+});
+
+test('update_draft carries an HTML body as text/html', async () => {
+    const { gmail, calls } = fakeGmail({ drafts: [DRAFT_ONE] });
+    await handleTool(gmail, 'update_draft', {
+        draftId: 'r-1',
+        to: ['anna@example.com'],
+        subject: 'Budget',
+        body: 'Budget',
+        htmlBody: '<p>Budget</p>',
+        mimeType: 'text/html',
+    });
+    const raw = decodeRaw(calls.draftUpdates[0].requestBody.message.raw);
+    assert.match(raw, /^Content-Type: text\/html/m);
+    assert.match(raw, /<p>Budget<\/p>/);
+});
+
+test('update_draft refuses an empty draft id without calling Gmail', async () => {
+    const { gmail, calls } = fakeGmail({ drafts: [DRAFT_ONE] });
+    const content = { to: ['anna@example.com'], subject: 'Budget', body: 'Body' };
+    for (const draftId of ['', '   ']) {
+        assert.equal(text(await handleTool(gmail, 'update_draft', { draftId, ...content })), EMPTY_DRAFT_ID);
+    }
+    assert.match(text(await handleTool(gmail, 'update_draft', content)), /^Error:/);
+    assert.equal(calls.draftUpdates.length, 0);
+    assert.equal(calls.draftGets.length, 0);
+});
+
+test('update_draft answers a Gmail error for an unknown draft', async () => {
+    const { gmail, calls } = fakeGmail();
+    const result = await handleTool(gmail, 'update_draft', {
+        draftId: 'nope',
+        to: ['anna@example.com'],
+        subject: 'Budget',
+        body: 'Body',
+    });
+    assert.equal(text(result), 'Error: Requested entity was not found.');
+    assert.equal(calls.draftUpdates.length, 0);
+});
+
+test('update_draft retries a per-minute quota refusal', async () => {
+    const clock = fakeClock();
+    const { gmail, calls } = fakeGmail({
+        drafts: [DRAFT_ONE],
+        refusals: { 'drafts.update': [googleError({ status: 429, reason: 'rateLimitExceeded', message: PER_MINUTE_QUOTA })] },
+    });
+    const result = await handleTool(
+        gmail,
+        'update_draft',
+        { draftId: 'r-1', to: ['anna@example.com'], subject: 'Budget', body: 'New body' },
+        { sleep: clock.sleep, now: clock.now, random: clock.random }
+    );
+    assert.equal(text(result), 'Email draft updated successfully with ID: r-1\nThread ID: t-1');
+    assert.equal(calls.draftUpdates.length, 2);
+    assert.equal(clock.slept.length, 1);
+});
+
+test('update_draft keeps its input schema and description', () => {
+    const tool = listTools().find(t => t.name === 'update_draft');
+    assert.ok(tool, 'update_draft is listed');
+    assert.deepEqual(Object.keys(tool.inputSchema.properties), [
+        'draftId', 'to', 'subject', 'body', 'htmlBody', 'mimeType', 'cc', 'bcc', 'threadId', 'inReplyTo', 'attachments',
+    ]);
+    for (const key of ['draftId', 'to', 'subject', 'body']) {
+        assert.ok(tool.inputSchema.required.includes(key), `${key} is required`);
+    }
+    assert.match(tool.description, /draft_email/);
+    assert.match(tool.description, /list_drafts/);
+    assert.match(tool.description, /conversation/i);
+});
+
+test('list_drafts, delete_draft, get_draft and update_draft are listed right after reply_email', () => {
     const names = listTools().map(t => t.name);
-    assert.equal(names.length, 23);
+    assert.equal(names.length, 24);
     const at = names.indexOf('reply_email');
     assert.equal(names[at + 1], 'list_drafts');
     assert.equal(names[at + 2], 'delete_draft');
     assert.equal(names[at + 3], 'get_draft');
+    assert.equal(names[at + 4], 'update_draft');
 });
 
 test('delete_draft keeps its input schema and description', () => {
@@ -195,7 +331,23 @@ const REAL_HEADERS = [
 
 const handler = (req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
-    requests.push({ method: req.method, path: url.pathname, query: url.searchParams });
+    const request = { method: req.method, path: url.pathname, query: url.searchParams };
+
+    if (req.method === 'PUT') {
+        let body = '';
+        req.on('data', (chunk) => { body += chunk; });
+        req.on('end', () => {
+            requests.push({ ...request, body });
+            if (url.pathname.endsWith('/users/me/drafts/r-9')) {
+                sendJson(res, 200, { id: 'r-9', message: { id: 'm-10', threadId: 't-9' } });
+            } else {
+                sendJson(res, 404, { error: { message: `unexpected request ${req.method} ${url.pathname}` } });
+            }
+        });
+        return;
+    }
+
+    requests.push(request);
 
     if (req.method === 'DELETE' && url.pathname.endsWith('/users/me/drafts/r-9')) {
         res.writeHead(204);
@@ -264,4 +416,27 @@ test('get_draft sends one GET to the draft URL, metadata', async () => {
     const fetched = requests.find(r => r.method === 'GET' && r.path.endsWith('/gmail/v1/users/me/drafts/r-9'));
     assert.ok(fetched, JSON.stringify(requests));
     assert.equal(fetched.query.get('format'), 'metadata');
+});
+
+test('update_draft sends one metadata GET and one PUT with the new raw message', async () => {
+    reset();
+    const result = await handleTool(gmail, 'update_draft', {
+        draftId: 'r-9',
+        to: ['anna@example.com'],
+        subject: 'Budget',
+        body: 'New body',
+    });
+    assert.equal(text(result), 'Email draft updated successfully with ID: r-9\nThread ID: t-9');
+
+    const fetched = requests.find(r => r.method === 'GET' && r.path.endsWith('/gmail/v1/users/me/drafts/r-9'));
+    assert.ok(fetched, JSON.stringify(requests));
+    assert.equal(fetched.query.get('format'), 'metadata');
+
+    const puts = requests.filter(r => r.method === 'PUT');
+    assert.equal(puts.length, 1);
+    assert.ok(puts[0].path.endsWith('/gmail/v1/users/me/drafts/r-9'), puts[0].path);
+    const body = JSON.parse(puts[0].body);
+    assert.equal(body.id, 'r-9');
+    assert.equal(body.message.threadId, 't-9');
+    assert.equal(typeof body.message.raw, 'string');
 });

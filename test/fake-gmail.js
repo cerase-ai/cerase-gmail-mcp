@@ -68,7 +68,7 @@ export function fakeClock() {
 // `attachments` is keyed by attachment id, each value the attachment bytes as a
 // base64url string; any other id is refused the way Gmail refuses a bad token.
 // `refusals` is keyed by method path ('messages.list', 'messages.get', 'drafts.list',
-// 'drafts.get', 'drafts.delete', ...). An array makes that method throw one error per call
+// 'drafts.get', 'drafts.delete', 'drafts.update', ...). An array makes that method throw one error per call
 // until spent then answer; a single error makes it throw on every call. Refused calls are
 // still recorded.
 export function fakeGmail({ messages = [], drafts = [], attachments = {}, profile = 'owner@example.com', sendAs = [], sendAsError = null, sentId = 'sent-1', refusals = {} } = {}) {
@@ -86,7 +86,7 @@ export function fakeGmail({ messages = [], drafts = [], attachments = {}, profil
         }
         throw value;
     };
-    const calls = { list: [], get: [], send: [], drafts: [], draftLists: [], draftGets: [], draftDeletes: [], attachmentGets: [], getProfile: 0, sendAsList: 0 };
+    const calls = { list: [], get: [], send: [], drafts: [], draftLists: [], draftGets: [], draftDeletes: [], draftUpdates: [], attachmentGets: [], getProfile: 0, sendAsList: 0 };
     const gmail = {
         users: {
             getProfile: async () => {
@@ -155,6 +155,13 @@ export function fakeGmail({ messages = [], drafts = [], attachments = {}, profil
                     const found = draftsById[params.id];
                     if (!found) throw new Error('Requested entity was not found.');
                     return { data: '' };
+                },
+                update: async (params) => {
+                    calls.draftUpdates.push(params);
+                    refuseOrNot('drafts.update');
+                    const found = draftsById[params.id];
+                    if (!found) throw new Error('Requested entity was not found.');
+                    return { data: { id: params.id, message: { id: 'm-updated', threadId: params.requestBody.message.threadId } } };
                 },
             },
         },

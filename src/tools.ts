@@ -131,6 +131,10 @@ const GetDraftSchema = z.object({
     draftId: z.string().describe("ID of the draft to read, as draft_email or list_drafts give it (not the ID of its message)"),
 });
 
+const UpdateDraftSchema = z.object({
+    draftId: z.string().describe("ID of the draft to replace, as draft_email or list_drafts give it (not the ID of its message)"),
+}).merge(SendEmailSchema);
+
 // New schema for listing email labels
 const ListEmailLabelsSchema = z.object({}).describe("Retrieves all available Gmail labels");
 
@@ -258,6 +262,11 @@ export function listTools() {
             inputSchema: zodToJsonSchema(GetDraftSchema),
         },
         {
+            name: "update_draft",
+            description: "Replaces the content of an existing draft, given the draft ID that draft_email or list_drafts answers, so a corrected mail stays one draft instead of a new one. Give the whole mail again (to, subject, body, htmlBody and the rest, as draft_email takes them): the draft becomes exactly what is given. A draft that replies in a conversation stays in that conversation: its thread and the message it answers are kept unless threadId or inReplyTo are given.",
+            inputSchema: zodToJsonSchema(UpdateDraftSchema),
+        },
+        {
             name: "read_email",
             description: "Retrieves the content of a specific email",
             inputSchema: zodToJsonSchema(ReadEmailSchema),
@@ -347,6 +356,14 @@ export function listTools() {
 
 // The headers reply_email reads from the email it answers
 const REPLY_HEADERS = ['Subject', 'From', 'To', 'Cc', 'Reply-To', 'Message-ID', 'References'];
+
+// Gmail takes a raw message base64url-encoded, without padding
+function encodeRawMessage(message: string): string {
+    return Buffer.from(message).toString('base64')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '');
+}
 
 // The mailbox owner's addresses: the profile's, plus its send-as aliases when they can be read
 async function getOwnAddresses(gmail: gmail_v1.Gmail): Promise<string[]> {
@@ -854,6 +871,61 @@ export async function handleTool(gmail: gmail_v1.Gmail, name: string, args: any,
                         {
                             type: "text",
                             text: `ID: ${detail.data.id ?? draftId}\nSubject: ${headerValue(headers, 'Subject')}\nTo: ${headerValue(headers, 'To')}\nDate: ${headerValue(headers, 'Date')}\n`,
+                        },
+                    ],
+                };
+            }
+
+            // Replaces one draft's content, keeping its conversation unless the caller names another
+            case "update_draft": {
+                const validatedArgs = UpdateDraftSchema.parse(args);
+                const draftId = validatedArgs.draftId.trim();
+                if (!draftId) {
+                    throw new Error("draftId is empty: give the draft's ID, as draft_email or list_drafts answer it");
+                }
+
+                const existing = await gmail.users.drafts.get({
+                    userId: 'me',
+                    id: draftId,
+                    format: 'metadata',
+                });
+                const headers = existing.data.message?.payload?.headers;
+                const threadId = validatedArgs.threadId || existing.data.message?.threadId;
+
+                // A caller's inReplyTo replaces the draft's whole threading chain.
+                let inReplyTo = validatedArgs.inReplyTo;
+                let references: string | undefined;
+                if (!inReplyTo) {
+                    inReplyTo = unfold(headerValue(headers, 'In-Reply-To')).trim() || undefined;
+                    references = unfold(headerValue(headers, 'References')).trim() || undefined;
+                }
+
+                const mergedArgs = { ...validatedArgs, inReplyTo, references };
+                const message = mergedArgs.attachments && mergedArgs.attachments.length > 0
+                    ? await createEmailWithNodemailer(mergedArgs)
+                    : createEmailMessage(mergedArgs);
+
+                const response = await gmail.users.drafts.update({
+                    userId: 'me',
+                    id: draftId,
+                    requestBody: {
+                        id: draftId,
+                        message: {
+                            raw: encodeRawMessage(message),
+                            ...(threadId && { threadId }),
+                        },
+                    },
+                });
+                const updatedThreadId = response.data.message?.threadId || threadId;
+
+                return {
+                    content: [
+                        {
+                            type: "text",
+                            text: [
+                                `Email draft updated successfully with ID: ${response.data.id ?? draftId}`,
+                                ...(updatedThreadId ? [`Thread ID: ${updatedThreadId}`] : []),
+                            ].join('\n'),
                         },
                     ],
                 };

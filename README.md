@@ -76,6 +76,12 @@ Date: Mon, 5 Oct 2026 10:00:00 +0200
 `get_draft` takes one such ID and answers that draft alone, in the same form, under the same
 `gmail.modify` scope (`users.drafts.get`); the approval to delete a draft is named by it.
 
+`update_draft` takes that ID and the whole new mail, as `draft_email` takes it, and replaces the
+draft with `users.drafts.update`, so a corrected mail stays one draft instead of a new one. A draft
+that replies in a conversation stays in it: its thread and the message it answers are kept unless
+`threadId` or `inReplyTo` are given. It answers `Email draft updated successfully with ID: <ID>`
+and `Thread ID: <ID>`.
+
 `delete_draft` takes that ID, or the one `draft_email` answers, and deletes the draft with
 `users.drafts.delete`: permanently, not to Trash. It answers `Draft <ID> deleted successfully`.
 Gmail accepts that call under the `gmail.modify` scope the connection holds, whereas `delete_email`
