@@ -1,6 +1,6 @@
 {
   "name": "cerase-gmail-mcp",
-  "version": "1.1.11-cerase.3",
+  "version": "1.1.11-cerase.4",
   "private": true,
   "description": "Gmail MCP server, a fork of @gongrzhe/server-gmail-autoauth-mcp 1.1.11",
   "type": "module",
@@ -40,14 +40,13 @@
   },
   "dependencies": {
     "@googleapis/gmail": "^22.0.1",
-    "@modelcontextprotocol/sdk": "^1.32.1",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@types/mime-types": "^2.1.4",
     "google-auth-library": "^11.2.0",
     "mime-types": "^3.0.1",
-    "nodemailer": "^10.0.16",
+    "nodemailer": "^10.1.4",
     "open": "^10.0.0",
-    "zod": "^3.25.76",
-    "zod-to-json-schema": "^3.22.1"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^20.10.5",

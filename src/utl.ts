@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { lookup as mimeLookup } from 'mime-types';
 import nodemailer from 'nodemailer';
+import { unfold } from './reply.js';
 
 /**
  * Helper function to encode email headers containing non-ASCII characters
@@ -21,8 +22,21 @@ export const validateEmail = (email: string): boolean => {
     return emailRegex.test(email);
 };
 
+// A recipient holding a line break could add a header the approval never
+// listed, so the call is refused, with the break shown as \r or \n.
+export function refuseRecipientLineBreaks(notSent: string, lists: Array<string[] | undefined>): void {
+    for (const list of lists) {
+        for (const value of list || []) {
+            if (/[\r\n]/.test(value)) {
+                const shown = value.replace(/\r/g, '\\r').replace(/\n/g, '\\n');
+                throw new Error(`${notSent}: a recipient holds a line break: «${shown}». Write each recipient as an address, one per entry.`);
+            }
+        }
+    }
+}
+
 export function createEmailMessage(validatedArgs: any): string {
-    const encodedSubject = encodeEmailHeader(validatedArgs.subject);
+    const encodedSubject = encodeEmailHeader(unfold(validatedArgs.subject));
     // Determine content type based on available content and explicit mimeType
     let mimeType = validatedArgs.mimeType || 'text/plain';
     
@@ -50,9 +64,9 @@ export function createEmailMessage(validatedArgs: any): string {
         validatedArgs.bcc ? `Bcc: ${validatedArgs.bcc.join(', ')}` : '',
         `Subject: ${encodedSubject}`,
         // Add thread-related headers if specified
-        validatedArgs.inReplyTo ? `In-Reply-To: ${validatedArgs.inReplyTo}` : '',
+        validatedArgs.inReplyTo ? `In-Reply-To: ${unfold(validatedArgs.inReplyTo)}` : '',
         // References defaults to In-Reply-To; reply_email passes the whole chain
-        (validatedArgs.references || validatedArgs.inReplyTo) ? `References: ${validatedArgs.references || validatedArgs.inReplyTo}` : '',
+        (validatedArgs.references || validatedArgs.inReplyTo) ? `References: ${unfold(validatedArgs.references || validatedArgs.inReplyTo)}` : '',
         'MIME-Version: 1.0',
     ].filter(Boolean);
 

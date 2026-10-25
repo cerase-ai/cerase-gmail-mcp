@@ -1,9 +1,8 @@
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import type { gmail_v1 } from '@googleapis/gmail';
 import fs from 'fs';
 import path from 'path';
-import {createEmailMessage, createEmailWithNodemailer} from "./utl.js";
+import {createEmailMessage, createEmailWithNodemailer, refuseRecipientLineBreaks} from "./utl.js";
 import { createLabel, updateLabel, deleteLabel, listLabels, findLabelByName, getOrCreateLabel, GmailLabel } from "./label-manager.js";
 import { createFilter, listFilters, getFilter, deleteFilter, filterTemplates, GmailFilterCriteria, GmailFilterAction } from "./filter-manager.js";
 import { headerValue, unfold, replySource, computeReplyAll, planReplyRecipients, formatAddressList, replySubject, buildReferences } from "./reply.js";
@@ -228,128 +227,149 @@ const DownloadAttachmentSchema = z.object({
 });
 
 
+// A tool's input schema as the listing has always shown it: zod 4's input mode
+// leaves a `.default()` field optional but writes no `additionalProperties:
+// false`, so every object, nested ones included, is closed here, and the
+// listing stays the one test/fixtures/tool-schemas.json pins.
+function toolInputSchema(schema: z.ZodType): Record<string, any> {
+    const jsonSchema = z.toJSONSchema(schema, { target: "draft-7", io: "input" }) as Record<string, any>;
+    const closeObjects = (node: any): void => {
+        if (!node || typeof node !== "object") return;
+        if (Array.isArray(node)) {
+            node.forEach(closeObjects);
+            return;
+        }
+        if (node.type === "object" && node.additionalProperties === undefined) {
+            node.additionalProperties = false;
+        }
+        Object.values(node).forEach(closeObjects);
+    };
+    closeObjects(jsonSchema);
+    return jsonSchema;
+}
+
 // Tool list, as the server answers ListTools
 export function listTools() {
     return [
         {
             name: "send_email",
             description: "Sends a new email",
-            inputSchema: zodToJsonSchema(SendEmailSchema),
+            inputSchema: toolInputSchema(SendEmailSchema),
         },
         {
             name: "draft_email",
             description: "Draft a new email",
-            inputSchema: zodToJsonSchema(SendEmailSchema),
+            inputSchema: toolInputSchema(SendEmailSchema),
         },
         {
             name: "reply_email",
             description: "Replies to an email in its conversation. The reply goes to the sender and to everyone in To and Cc of that email, except the mailbox owner, unless exclude names someone to leave out. to, cc and bcc only add people the email did not go to.",
-            inputSchema: zodToJsonSchema(ReplyEmailSchema),
+            inputSchema: toolInputSchema(ReplyEmailSchema),
         },
         {
             name: "list_drafts",
             description: "Lists the drafts in the mailbox with each draft's ID, subject, recipients (To) and date. delete_draft takes the ID shown here. maxResults is how many drafts to return: 20 when not given, at most 100.",
-            inputSchema: zodToJsonSchema(ListDraftsSchema),
+            inputSchema: toolInputSchema(ListDraftsSchema),
         },
         {
             name: "delete_draft",
             description: "Permanently deletes a draft, given the draft ID that draft_email or list_drafts answers. The draft does not go to Trash and cannot be recovered. Use this, not delete_email, to remove a draft.",
-            inputSchema: zodToJsonSchema(DeleteDraftSchema),
+            inputSchema: toolInputSchema(DeleteDraftSchema),
         },
         {
             name: "get_draft",
             description: "Reads one draft, given the draft ID that draft_email or list_drafts answers, and answers its ID, subject, recipients (To) and date, as list_drafts does for each. Use it to tell which draft an ID names before delete_draft removes it.",
-            inputSchema: zodToJsonSchema(GetDraftSchema),
+            inputSchema: toolInputSchema(GetDraftSchema),
         },
         {
             name: "update_draft",
             description: "Replaces the content of an existing draft, given the draft ID that draft_email or list_drafts answers, so a corrected mail stays one draft instead of a new one. Give the whole mail again (to, subject, body, htmlBody and the rest, as draft_email takes them): the draft becomes exactly what is given. A draft that replies in a conversation stays in that conversation: its thread and the message it answers are kept unless threadId or inReplyTo are given.",
-            inputSchema: zodToJsonSchema(UpdateDraftSchema),
+            inputSchema: toolInputSchema(UpdateDraftSchema),
         },
         {
             name: "read_email",
             description: "Retrieves the content of a specific email",
-            inputSchema: zodToJsonSchema(ReadEmailSchema),
+            inputSchema: toolInputSchema(ReadEmailSchema),
         },
         {
             name: "search_emails",
             description: "Searches for emails using Gmail search syntax",
-            inputSchema: zodToJsonSchema(SearchEmailsSchema),
+            inputSchema: toolInputSchema(SearchEmailsSchema),
         },
         {
             name: "modify_email",
             description: "Modifies email labels (move to different folders)",
-            inputSchema: zodToJsonSchema(ModifyEmailSchema),
+            inputSchema: toolInputSchema(ModifyEmailSchema),
         },
         {
             name: "delete_email",
             description: "Permanently deletes an email",
-            inputSchema: zodToJsonSchema(DeleteEmailSchema),
+            inputSchema: toolInputSchema(DeleteEmailSchema),
         },
         {
             name: "list_email_labels",
             description: "Retrieves all available Gmail labels",
-            inputSchema: zodToJsonSchema(ListEmailLabelsSchema),
+            inputSchema: toolInputSchema(ListEmailLabelsSchema),
         },
         {
             name: "batch_modify_emails",
             description: "Modifies labels for multiple emails in batches",
-            inputSchema: zodToJsonSchema(BatchModifyEmailsSchema),
+            inputSchema: toolInputSchema(BatchModifyEmailsSchema),
         },
         {
             name: "batch_delete_emails",
             description: "Permanently deletes multiple emails in batches",
-            inputSchema: zodToJsonSchema(BatchDeleteEmailsSchema),
+            inputSchema: toolInputSchema(BatchDeleteEmailsSchema),
         },
         {
             name: "create_label",
             description: "Creates a new Gmail label",
-            inputSchema: zodToJsonSchema(CreateLabelSchema),
+            inputSchema: toolInputSchema(CreateLabelSchema),
         },
         {
             name: "update_label",
             description: "Updates an existing Gmail label",
-            inputSchema: zodToJsonSchema(UpdateLabelSchema),
+            inputSchema: toolInputSchema(UpdateLabelSchema),
         },
         {
             name: "delete_label",
             description: "Deletes a Gmail label",
-            inputSchema: zodToJsonSchema(DeleteLabelSchema),
+            inputSchema: toolInputSchema(DeleteLabelSchema),
         },
         {
             name: "get_or_create_label",
             description: "Gets an existing label by name or creates it if it doesn't exist",
-            inputSchema: zodToJsonSchema(GetOrCreateLabelSchema),
+            inputSchema: toolInputSchema(GetOrCreateLabelSchema),
         },
         {
             name: "create_filter",
             description: "Creates a new Gmail filter with custom criteria and actions",
-            inputSchema: zodToJsonSchema(CreateFilterSchema),
+            inputSchema: toolInputSchema(CreateFilterSchema),
         },
         {
             name: "list_filters",
             description: "Retrieves all Gmail filters",
-            inputSchema: zodToJsonSchema(ListFiltersSchema),
+            inputSchema: toolInputSchema(ListFiltersSchema),
         },
         {
             name: "get_filter",
             description: "Gets details of a specific Gmail filter",
-            inputSchema: zodToJsonSchema(GetFilterSchema),
+            inputSchema: toolInputSchema(GetFilterSchema),
         },
         {
             name: "delete_filter",
             description: "Deletes a Gmail filter",
-            inputSchema: zodToJsonSchema(DeleteFilterSchema),
+            inputSchema: toolInputSchema(DeleteFilterSchema),
         },
         {
             name: "create_filter_from_template",
             description: "Creates a filter using a pre-defined template for common scenarios",
-            inputSchema: zodToJsonSchema(CreateFilterFromTemplateSchema),
+            inputSchema: toolInputSchema(CreateFilterFromTemplateSchema),
         },
         {
             name: "download_attachment",
             description: "Downloads an email attachment to a specified location",
-            inputSchema: zodToJsonSchema(DownloadAttachmentSchema),
+            inputSchema: toolInputSchema(DownloadAttachmentSchema),
         },
     ];
 }
@@ -541,12 +561,14 @@ export async function handleTool(gmail: gmail_v1.Gmail, name: string, args: any,
             case "send_email":
             case "draft_email": {
                 const validatedArgs = SendEmailSchema.parse(args);
+                refuseRecipientLineBreaks(name === "send_email" ? 'Email not sent' : 'Draft not saved', [validatedArgs.to, validatedArgs.cc, validatedArgs.bcc]);
                 const action = name === "send_email" ? "send" : "draft";
                 return await handleEmailAction(action, validatedArgs);
             }
 
             case "reply_email": {
                 const validatedArgs = ReplyEmailSchema.parse(args);
+                refuseRecipientLineBreaks('Reply not sent', [validatedArgs.to, validatedArgs.cc, validatedArgs.bcc, validatedArgs.exclude]);
                 const [original, ownAddresses] = await Promise.all([
                     gmail.users.messages.get({
                         userId: 'me',
@@ -879,6 +901,7 @@ export async function handleTool(gmail: gmail_v1.Gmail, name: string, args: any,
             // Replaces one draft's content, keeping its conversation unless the caller names another
             case "update_draft": {
                 const validatedArgs = UpdateDraftSchema.parse(args);
+                refuseRecipientLineBreaks('Draft not saved', [validatedArgs.to, validatedArgs.cc, validatedArgs.bcc]);
                 const draftId = validatedArgs.draftId.trim();
                 if (!draftId) {
                     throw new Error("draftId is empty: give the draft's ID, as draft_email or list_drafts answer it");
