@@ -1,6 +1,6 @@
 {
   "name": "cerase-gmail-mcp",
-  "version": "1.1.11-cerase.5",
+  "version": "1.1.11-cerase.6",
   "private": true,
   "description": "Gmail MCP server, a fork of @gongrzhe/server-gmail-autoauth-mcp 1.1.11",
   "type": "module",

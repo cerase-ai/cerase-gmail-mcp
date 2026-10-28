@@ -71,6 +71,10 @@ function extractEmailContent(messagePart: GmailMessagePart): EmailContent {
     return { text: textContent, html: htmlContent };
 }
 
+function formatLabels(labelIds?: string[] | null): string {
+    return `Labels: ${labelIds && labelIds.length > 0 ? labelIds.join(', ') : '(none)'}`;
+}
+
 // Schema definitions
 const SendEmailSchema = z.object({
     to: z.array(z.string()).describe("List of recipient email addresses"),
@@ -655,6 +659,7 @@ export async function handleTool(gmail: gmail_v1.Gmail, name: string, args: any,
                     ...(cc ? [`Cc: ${cc}`] : []),
                     ...(replyTo ? [`Reply-To: ${replyTo}`] : []),
                     `Date: ${date}`,
+                    formatLabels(response.data.labelIds),
                     `Reply-all To: ${formatAddressList(replyAll.to)}`,
                     ...(replyAll.cc.length > 0 ? [`Reply-all Cc: ${formatAddressList(replyAll.cc)}`] : []),
                 ];
@@ -732,6 +737,7 @@ export async function handleTool(gmail: gmail_v1.Gmail, name: string, args: any,
                             subject: headers.find(h => h.name === 'Subject')?.value || '',
                             from: headers.find(h => h.name === 'From')?.value || '',
                             date: headers.find(h => h.name === 'Date')?.value || '',
+                            labels: formatLabels(detail.data.labelIds),
                         };
                     })
                 );
@@ -741,7 +747,7 @@ export async function handleTool(gmail: gmail_v1.Gmail, name: string, args: any,
                         {
                             type: "text",
                             text: results.map(r =>
-                                `ID: ${r.id}\nSubject: ${r.subject}\nFrom: ${r.from}\nDate: ${r.date}\n`
+                                `ID: ${r.id}\nSubject: ${r.subject}\nFrom: ${r.from}\nDate: ${r.date}\n${r.labels}\n`
                             ).join('\n'),
                         },
                     ],

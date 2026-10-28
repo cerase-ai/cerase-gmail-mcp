@@ -23,12 +23,17 @@ To: Paolo Verdi <paolo@example.com>, Luca Neri <luca@example.com>
 Cc: "Rossi, Mario" <mario@example.com>, giulia@example.com
 Reply-To: Anna Bianchi <anna.b@example.com>
 Date: Mon, 5 Oct 2026 10:00:00 +0200
+Labels: INBOX, CATEGORY_PERSONAL
 Reply-all To: Anna Bianchi <anna.b@example.com>, Luca Neri <luca@example.com>
 Reply-all Cc: "Rossi, Mario" <mario@example.com>, giulia@example.com
 ```
 
 followed by a blank line and the body exactly as upstream returns it. `Cc:` and `Reply-To:` appear
 only when the mail has them, `Reply-all Cc:` only when it is not empty.
+
+`Labels:` lists the message's label ids in Gmail's order (`CATEGORY_PERSONAL` is Primary,
+`CATEGORY_UPDATES` Updates; a user label appears as its id, which `list_email_labels` names), and
+is `(none)` when it has none.
 
 `Reply-all To` is the mail's Reply-To, or its From when it has none, followed by its To;
 `Reply-all Cc` is its Cc. When the mailbox owner sent the mail, `Reply-all To` is the mail's To.
@@ -94,6 +99,9 @@ answered the same text as an ordinary result: a refusal from Gmail, a quota retr
 arguments refused before Gmail is called. `batch_modify_emails` and `batch_delete_emails` are marked
 when Gmail refused every message; when some went through, the answer is an ordinary result that
 names the messages that failed.
+
+**6. `search_emails` reports each result's labels.** Every result block ends with the same
+`Labels:` line, read from the same metadata request, so no request is added per result.
 
 The reply-all logic is in `src/reply.ts`; the quota retry is in `src/quota-retry.ts`; the tool list
 and the tool handler are in `src/tools.ts`; `src/index.ts` authenticates and serves them over stdio.

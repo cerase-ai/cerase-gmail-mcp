@@ -11,7 +11,9 @@ export function decodeRaw(raw) {
 }
 
 // A message as `users.messages.get` returns it, headers given as [name, value] pairs.
-export function message({ id = 'msg-1', threadId = 'thread-1', headers = [], text = 'Hello', html, parts } = {}) {
+// `labelIds` is left off entirely when not given, as Gmail does for a message with
+// no labels in some responses; an explicit empty array is kept as such.
+export function message({ id = 'msg-1', threadId = 'thread-1', headers = [], text = 'Hello', html, parts, labelIds } = {}) {
     const payload = {
         mimeType: html !== undefined ? 'multipart/alternative' : 'text/plain',
         headers: headers.map(([name, value]) => ({ name, value })),
@@ -27,7 +29,9 @@ export function message({ id = 'msg-1', threadId = 'thread-1', headers = [], tex
     } else {
         payload.body = { data: b64(text) };
     }
-    return { id, threadId, payload };
+    const result = { id, threadId, payload };
+    if (labelIds !== undefined) result.labelIds = labelIds;
+    return result;
 }
 
 // A refusal as Gmail denies a request: an Error carrying the HTTP status, the
