@@ -32,13 +32,20 @@ export function message({ id = 'msg-1', threadId = 'thread-1', headers = [], tex
 
 // A refusal as Gmail denies a request: an Error carrying the HTTP status, the
 // API error object and the response headers (which may hold `retry-after`).
-export function googleError({ status = 429, reason = 'rateLimitExceeded', message = 'Quota exceeded', retryAfter } = {}) {
-    const apiStatus = status === 429 ? 'RESOURCE_EXHAUSTED' : 'PERMISSION_DENIED';
+export function googleError({ status = 429, reason = 'rateLimitExceeded', message = 'Quota exceeded', retryAfter, domain } = {}) {
+    const apiStatuses = {
+        400: 'INVALID_ARGUMENT',
+        403: 'PERMISSION_DENIED',
+        404: 'NOT_FOUND',
+        429: 'RESOURCE_EXHAUSTED',
+    };
+    const apiStatus = apiStatuses[status] ?? 'PERMISSION_DENIED';
+    const rateLimited = reason === 'rateLimitExceeded' || reason === 'userRateLimitExceeded';
     const apiError = {
         code: status,
         message,
         status: apiStatus,
-        errors: [{ message, domain: 'usageLimits', reason }],
+        errors: [{ message, domain: domain ?? (rateLimited ? 'usageLimits' : 'global'), reason }],
     };
     const headers = new Headers();
     if (retryAfter !== undefined) headers.set('retry-after', String(retryAfter));
@@ -86,7 +93,7 @@ export function fakeGmail({ messages = [], drafts = [], attachments = {}, profil
         }
         throw value;
     };
-    const calls = { list: [], get: [], send: [], drafts: [], draftLists: [], draftGets: [], draftDeletes: [], draftUpdates: [], attachmentGets: [], getProfile: 0, sendAsList: 0 };
+    const calls = { list: [], get: [], send: [], modify: [], deletes: [], drafts: [], draftLists: [], draftGets: [], draftDeletes: [], draftUpdates: [], attachmentGets: [], getProfile: 0, sendAsList: 0 };
     const gmail = {
         users: {
             getProfile: async () => {
@@ -113,7 +120,7 @@ export function fakeGmail({ messages = [], drafts = [], attachments = {}, profil
                     calls.get.push(params);
                     refuseOrNot('messages.get');
                     const found = byId[params.id];
-                    if (!found) throw new Error('Requested entity was not found.');
+                    if (!found) throw googleError({ status: 404, reason: 'notFound', message: 'Requested entity was not found.' });
                     return { data: found };
                 },
                 send: async (params) => {
@@ -121,11 +128,25 @@ export function fakeGmail({ messages = [], drafts = [], attachments = {}, profil
                     refuseOrNot('messages.send');
                     return { data: { id: sentId, threadId: params.requestBody.threadId || 'thread-new' } };
                 },
+                modify: async (params) => {
+                    calls.modify.push(params);
+                    refuseOrNot('messages.modify');
+                    const found = byId[params.id];
+                    if (!found) throw googleError({ status: 404, reason: 'notFound', message: 'Requested entity was not found.' });
+                    return { data: { id: params.id, labelIds: [] } };
+                },
+                delete: async (params) => {
+                    calls.deletes.push(params);
+                    refuseOrNot('messages.delete');
+                    const found = byId[params.id];
+                    if (!found) throw googleError({ status: 404, reason: 'notFound', message: 'Requested entity was not found.' });
+                    return { data: '' };
+                },
                 attachments: {
                     get: async (params) => {
                         calls.attachmentGets.push(params);
                         const data = attachments[params.id];
-                        if (data === undefined) throw new Error('Invalid attachment token');
+                        if (data === undefined) throw googleError({ status: 400, reason: 'invalidArgument', message: 'Invalid attachment token' });
                         return { data: { data } };
                     },
                 },
@@ -146,25 +167,75 @@ export function fakeGmail({ messages = [], drafts = [], attachments = {}, profil
                     calls.draftGets.push(params);
                     refuseOrNot('drafts.get');
                     const found = draftsById[params.id];
-                    if (!found) throw new Error('Requested entity was not found.');
+                    if (!found) throw googleError({ status: 404, reason: 'notFound', message: 'Requested entity was not found.' });
                     return { data: { id: found.id, message: found.message } };
                 },
                 delete: async (params) => {
                     calls.draftDeletes.push(params);
                     refuseOrNot('drafts.delete');
                     const found = draftsById[params.id];
-                    if (!found) throw new Error('Requested entity was not found.');
+                    if (!found) throw googleError({ status: 404, reason: 'notFound', message: 'Requested entity was not found.' });
                     return { data: '' };
                 },
                 update: async (params) => {
                     calls.draftUpdates.push(params);
                     refuseOrNot('drafts.update');
                     const found = draftsById[params.id];
-                    if (!found) throw new Error('Requested entity was not found.');
+                    if (!found) throw googleError({ status: 404, reason: 'notFound', message: 'Requested entity was not found.' });
                     return { data: { id: params.id, message: { id: 'm-updated', threadId: params.requestBody.message.threadId } } };
                 },
             },
         },
     };
     return { gmail, calls };
+}
+
+// A client whose every leaf method refuses with `error` and records the dotted
+// path it was called on, so a test can prove a failure came from Gmail and not
+// from argument validation. Namespaces are plain objects, as withQuotaRetry
+// requires: it reads each property and wraps a function as a plain wrapper.
+export function refusingGmail(error) {
+    const called = [];
+    const paths = [
+        'users.getProfile',
+        'users.messages.list',
+        'users.messages.get',
+        'users.messages.send',
+        'users.messages.modify',
+        'users.messages.delete',
+        'users.messages.batchModify',
+        'users.messages.batchDelete',
+        'users.messages.attachments.get',
+        'users.drafts.create',
+        'users.drafts.list',
+        'users.drafts.get',
+        'users.drafts.update',
+        'users.drafts.delete',
+        'users.drafts.send',
+        'users.labels.list',
+        'users.labels.get',
+        'users.labels.create',
+        'users.labels.update',
+        'users.labels.patch',
+        'users.labels.delete',
+        'users.settings.sendAs.list',
+        'users.settings.filters.list',
+        'users.settings.filters.get',
+        'users.settings.filters.create',
+        'users.settings.filters.delete',
+    ];
+    const gmail = {};
+    for (const path of paths) {
+        const parts = path.split('.');
+        let node = gmail;
+        for (const part of parts.slice(0, -1)) {
+            node[part] = node[part] || {};
+            node = node[part];
+        }
+        node[parts[parts.length - 1]] = async () => {
+            called.push(path);
+            throw error;
+        };
+    }
+    return { gmail, called };
 }

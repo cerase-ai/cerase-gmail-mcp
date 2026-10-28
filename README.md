@@ -4,7 +4,7 @@ A Gmail MCP server that runs over stdio. It is a fork of
 [GongRzhe/Gmail-MCP-Server](https://github.com/GongRzhe/Gmail-MCP-Server) at release 1.1.11
 (`@gongrzhe/server-gmail-autoauth-mcp`, commit `a890d19`).
 
-Every upstream tool keeps its name, its arguments and its behaviour. The server reads the same
+Every upstream tool keeps its name, its arguments and, apart from what follows, its behaviour. The server reads the same
 credential files and variables as upstream (`~/.gmail-mcp/credentials.json`,
 `~/.gmail-mcp/gcp-oauth.keys.json`, `GMAIL_OAUTH_PATH`, `GMAIL_CREDENTIALS_PATH`), so a mailbox
 already connected to upstream works without being connected again.
@@ -87,6 +87,13 @@ and `Thread ID: <ID>`.
 Gmail accepts that call under the `gmail.modify` scope the connection holds, whereas `delete_email`
 calls `users.messages.delete`, which Gmail accepts only with full access to the mailbox, so
 `delete_email` cannot remove a draft on this connection.
+
+**5. A call that fails is marked as one.** Its answer is an MCP tool result with `isError: true`
+and the error's text, `Error: <message>` or `Failed to download attachment: <message>`, where upstream
+answered the same text as an ordinary result: a refusal from Gmail, a quota retry that ran out, and
+arguments refused before Gmail is called. `batch_modify_emails` and `batch_delete_emails` are marked
+when Gmail refused every message; when some went through, the answer is an ordinary result that
+names the messages that failed.
 
 The reply-all logic is in `src/reply.ts`; the quota retry is in `src/quota-retry.ts`; the tool list
 and the tool handler are in `src/tools.ts`; `src/index.ts` authenticates and serves them over stdio.

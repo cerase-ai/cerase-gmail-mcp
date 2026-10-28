@@ -1028,6 +1028,7 @@ export async function handleTool(gmail: gmail_v1.Gmail, name: string, args: any,
                             text: resultText,
                         },
                     ],
+                    ...(successCount === 0 && failureCount > 0 && { isError: true }),
                 };
             }
 
@@ -1074,6 +1075,7 @@ export async function handleTool(gmail: gmail_v1.Gmail, name: string, args: any,
                             text: resultText,
                         },
                     ],
+                    ...(successCount === 0 && failureCount > 0 && { isError: true }),
                 };
             }
 
@@ -1378,6 +1380,7 @@ export async function handleTool(gmail: gmail_v1.Gmail, name: string, args: any,
                                 text: `Failed to download attachment: ${error.message}`,
                             },
                         ],
+                        isError: true,
                     };
                 }
             }
@@ -1393,6 +1396,7 @@ export async function handleTool(gmail: gmail_v1.Gmail, name: string, args: any,
                     text: `Error: ${error.message}`,
                 },
             ],
+            isError: true,
         };
     }
 }
